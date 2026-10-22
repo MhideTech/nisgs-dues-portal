@@ -8,7 +8,7 @@
 A simple, streamlined web app created solely for the **Class of 2030 (Department of Surveying & Geoinformatics)** to handle two essentials without stress:
 1. **Submit Profile & Dues (Default on page load)**: A clean form where coursemates input their biodata, birthday, photo, and upload their ₦2,000 class dues receipt.
 2. **Paid List (Dashboard)**: The transparent public list of everyone who has paid, showing their name, birthday, and proof of payment.
-3. **Admin Birthday Hub (PIN-Protected, default `0000`)**: Accessed from the top right "Admin" button. Displays today's celebrants, upcoming birthdays for the next 30 days, month filters, the high-res 1080×1350px birthday flyer generator, and human-written WhatsApp status caption generator with emojis.
+3. **Admin Birthday Hub (PIN-Protected: `2030`)**: Accessed from the top right "Admin" button. Displays today's celebrants, upcoming birthdays for the next 30 days, month filters, the high-res 1080×1350px birthday flyer generator, and human-written WhatsApp status caption generator with emojis.
 
 ---
 
@@ -38,6 +38,6 @@ npm run dev
   - Columns: `#`, `NAMES`, `BIRTHDAY`, `PROOF` (View receipt)
   - Instant name/nickname search
 - **Admin**:
-  - Protected with PIN `0000`
+  - Protected with PIN `2030`
   - Generates official Class of 2030 birthday flyers
   - Generates specialized, human-sounding birthday captions with emojis (banter, hype, prayers) tailored to each coursemate's nickname and interests!
