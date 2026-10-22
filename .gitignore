@@ -1,0 +1,10 @@
+node_modules/
+dist/
+nisgs.db
+.env
+.DS_Store
+*.log
+uploads/photos/*
+!uploads/photos/.gitkeep
+uploads/receipts/*
+!uploads/receipts/.gitkeep

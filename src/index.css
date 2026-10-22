@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-nisgs-green: #007A48;
+    --color-nisgs-dark: #08120E;
+    --color-nisgs-emerald: #10B981;
+  }
+
+  body {
+    background-color: #090D0B;
+    color: #F3F4F6;
+    overflow-x: hidden;
+  }
+
+  /* Custom subtle geodetic grid texture */
+  .geodetic-grid {
+    background-image: 
+      radial-gradient(circle at 1px 1px, rgba(16, 185, 129, 0.08) 1px, transparent 0);
+    background-size: 28px 28px;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: #0D1310;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #1B2B23;
+    border-radius: 9999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #2E4C3E;
+  }
+}
