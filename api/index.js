@@ -1,19 +1,27 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { put, del, list } from '@vercel/blob';
-import fs from 'fs';
+import { put, del, list, get } from '@vercel/blob';
 import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
+
+// Disable Express ETag so responses are never cached as 304 Not Modified
+app.set('etag', false);
+
 app.use(cors());
 app.use(express.json());
 
-// Memory storage for multer (100% serverless compatible)
+// Force no caching on all API responses so updates reflect immediately
+app.use((req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.setHeader('Surrogate-Control', 'no-store');
+  next();
+});
+
+// Memory storage for multer (serverless compatible)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
@@ -45,58 +53,57 @@ const INITIAL_SHOWCASE_STUDENT = {
   created_at: new Date().toISOString()
 };
 
-// Blob options helper
-function getBlobOptions() {
-  const options = { access: 'public' };
-  if (process.env.BLOB_READ_WRITE_TOKEN) {
-    options.token = process.env.BLOB_READ_WRITE_TOKEN;
-  }
-  if (process.env.BLOB_STORE_ID) {
-    options.storeId = process.env.BLOB_STORE_ID;
-  }
-  if (process.env.VERCEL_OIDC_TOKEN) {
-    options.oidcToken = process.env.VERCEL_OIDC_TOKEN;
-  }
-  return options;
-}
+const BLOB_PREFIX = 'data/students-';
 
-// In-memory fallback for local dev if Blob is offline
+// In-memory fallback if Blob is unreachable
 let localStudents = [INITIAL_SHOWCASE_STUDENT];
 
 // Read students from Blob or fallback
 async function getStudentsList() {
   try {
-    const blobOpts = getBlobOptions();
-    if (blobOpts.token || (blobOpts.storeId && blobOpts.oidcToken)) {
-      const { blobs } = await list({ prefix: 'data/students.json', ...blobOpts });
-      if (blobs.length > 0) {
-        const res = await fetch(blobs[0].url, { cache: 'no-store' });
-        if (res.ok) {
-          const data = await res.json();
-          return Array.isArray(data) ? data : [];
+    const { blobs } = await list({ prefix: BLOB_PREFIX });
+    if (blobs.length > 0) {
+      // Sort descending by uploadedAt to get the latest snapshot
+      blobs.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+      const latest = blobs[0];
+      const res = await get(latest.pathname, { access: 'public' });
+      if (res && res.stream) {
+        const text = await new Response(res.stream).text();
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          localStudents = parsed;
+          return parsed;
         }
       }
     }
   } catch (err) {
-    console.warn('Vercel Blob read note:', err.message);
+    console.warn('[Vercel Blob] Read note:', err.message);
   }
   return localStudents;
 }
 
-// Save students to Blob or fallback
+// Save students to Blob with unique snapshot to guarantee zero-cache staleness
 async function saveStudentsList(students) {
   localStudents = students;
   try {
-    const blobOpts = getBlobOptions();
-    if (blobOpts.token || (blobOpts.storeId && blobOpts.oidcToken)) {
-      await put('data/students.json', JSON.stringify(students, null, 2), {
-        ...blobOpts,
-        addRandomSuffix: false,
-        contentType: 'application/json'
-      });
-    }
+    const newPath = `${BLOB_PREFIX}${Date.now()}.json`;
+    await put(newPath, JSON.stringify(students, null, 2), {
+      access: 'public',
+      contentType: 'application/json'
+    });
+    console.log(`[Vercel Blob] Successfully saved snapshot with ${students.length} students to ${newPath}`);
+
+    // Prune older snapshots
+    list({ prefix: BLOB_PREFIX }).then(async ({ blobs }) => {
+      for (const b of blobs) {
+        if (b.pathname !== newPath) {
+          await del(b.url).catch(() => {});
+        }
+      }
+    }).catch(() => {});
   } catch (err) {
-    console.warn('Vercel Blob write note:', err.message);
+    console.error('[Vercel Blob] Write error:', err.message);
+    throw err;
   }
 }
 
@@ -147,37 +154,34 @@ app.post('/api/students/submit', upload.fields([
     let photoUrl = existing ? existing.photo_url : null;
     let receiptUrl = existing ? existing.receipt_url : null;
 
-    const blobOpts = getBlobOptions();
-    const isBlobActive = Boolean(blobOpts.token || (blobOpts.storeId && blobOpts.oidcToken));
-
-    // Upload photo
+    // Upload photo to Blob or fallback to base64
     if (req.files?.['photo']?.[0]) {
       const file = req.files['photo'][0];
-      if (isBlobActive) {
+      try {
         const unique = `photos/${Date.now()}-${cleanMatric.replace(/[^A-Z0-9]/gi, '_')}${path.extname(file.originalname) || '.jpg'}`;
         const blob = await put(unique, file.buffer, {
-          ...blobOpts,
+          access: 'public',
           contentType: file.mimetype
         });
         photoUrl = blob.url;
-      } else {
-        // Fallback base64
+      } catch (blobErr) {
+        console.warn('Photo Blob upload fallback:', blobErr.message);
         photoUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
       }
     }
 
-    // Upload receipt
+    // Upload receipt to Blob or fallback to base64
     if (req.files?.['receipt']?.[0]) {
       const file = req.files['receipt'][0];
-      if (isBlobActive) {
+      try {
         const unique = `receipts/${Date.now()}-${cleanMatric.replace(/[^A-Z0-9]/gi, '_')}${path.extname(file.originalname) || '.jpg'}`;
         const blob = await put(unique, file.buffer, {
-          ...blobOpts,
+          access: 'public',
           contentType: file.mimetype
         });
         receiptUrl = blob.url;
-      } else {
-        // Fallback base64
+      } catch (blobErr) {
+        console.warn('Receipt Blob upload fallback:', blobErr.message);
         receiptUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
       }
     }
@@ -217,7 +221,8 @@ app.post('/api/students/submit', upload.fields([
     res.json({
       success: true,
       message: 'Submitted successfully! You are now listed on the paid dashboard.',
-      matric_no: cleanMatric
+      matric_no: cleanMatric,
+      student: studentRecord
     });
   } catch (err) {
     console.error('Submission error:', err);
@@ -241,11 +246,14 @@ app.post('/api/admin/delete-student', async (req, res) => {
     return res.status(403).json({ error: 'Incorrect Admin PIN' });
   }
 
-  let students = await getStudentsList();
-  students = students.filter(s => s.id !== student_id);
-  await saveStudentsList(students);
-
-  res.json({ success: true, message: 'Student record removed' });
+  try {
+    let students = await getStudentsList();
+    students = students.filter(s => s.id !== student_id);
+    await saveStudentsList(students);
+    res.json({ success: true, message: 'Student record removed' });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to delete student record' });
+  }
 });
 
 export default app;

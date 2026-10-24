@@ -142,7 +142,7 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
       });
 
       if (onSubmissionSuccess) {
-        onSubmissionSuccess();
+        await onSubmissionSuccess();
       }
     } catch (err) {
       setErrorMsg(err.message || 'Network error occurred. Please try again.');

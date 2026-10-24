@@ -24,9 +24,10 @@ export default function App() {
   const fetchData = async () => {
     try {
       setIsLoading(true);
+      const cacheBuster = Date.now();
       const [studentsRes, settingsRes] = await Promise.all([
-        fetch('/api/students'),
-        fetch('/api/settings')
+        fetch(`/api/students?_t=${cacheBuster}`, { cache: 'no-store' }),
+        fetch(`/api/settings?_t=${cacheBuster}`, { cache: 'no-store' })
       ]);
 
       if (studentsRes.ok) {
@@ -142,8 +143,8 @@ export default function App() {
 
             <SubmissionForm
               settings={settings}
-              onSubmissionSuccess={() => {
-                fetchData();
+              onSubmissionSuccess={async () => {
+                await fetchData();
                 setActiveTab('board');
               }}
             />
@@ -153,13 +154,25 @@ export default function App() {
         {/* Tab 2: Paid List Dashboard */}
         {activeTab === 'board' && (
           <div className="space-y-4">
-            <div className="text-center sm:text-left space-y-1">
-              <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-                Paid List
-              </h1>
-              <p className="text-xs text-stone-400">
-                Coursemates who have submitted their profile and dues payment receipt.
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="text-center sm:text-left space-y-1">
+                <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+                  Paid List
+                </h1>
+                <p className="text-xs text-stone-400">
+                  Coursemates who have submitted their profile and dues payment receipt.
+                </p>
+              </div>
+
+              <button
+                onClick={fetchData}
+                disabled={isLoading}
+                className="self-center sm:self-auto inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-stone-900 hover:bg-stone-800 text-stone-300 border border-stone-800 hover:border-emerald-700/60 transition-colors disabled:opacity-50"
+                title="Refresh Paid List"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-emerald-400 ${isLoading ? 'animate-spin' : ''}`} />
+                <span>{isLoading ? 'Updating...' : 'Refresh List'}</span>
+              </button>
             </div>
 
             <DuesBoard
