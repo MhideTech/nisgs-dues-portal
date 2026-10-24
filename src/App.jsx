@@ -143,7 +143,8 @@ export default function App() {
 
             <SubmissionForm
               settings={settings}
-              onSubmissionSuccess={async () => {
+              onSubmissionSuccess={fetchData}
+              onViewPaidList={async () => {
                 await fetchData();
                 setActiveTab('board');
               }}

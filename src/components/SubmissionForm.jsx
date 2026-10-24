@@ -4,7 +4,7 @@ import {
   Copy, Check, ArrowRight, Sparkles 
 } from 'lucide-react';
 
-export default function SubmissionForm({ settings, onSubmissionSuccess }) {
+export default function SubmissionForm({ settings, onSubmissionSuccess, onViewPaidList }) {
   const [formData, setFormData] = useState({
     fullName: '',
     matricNo: '',
@@ -45,7 +45,52 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
   // Just 1, 2, 3, etc. (no "Day" text as requested)
   const days = Array.from({ length: 31 }, (_, i) => i + 1);
 
-  const handlePhotoChange = (e) => {
+  // Fast client-side image compression so mobile submissions take < 1s
+  const compressImage = (file, maxWidth = 1000, quality = 0.76) => {
+    return new Promise((resolve, reject) => {
+      if (!file) return resolve(null);
+      if (file.type === 'application/pdf') {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxWidth || height > maxWidth) {
+            if (width > height) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            } else {
+              width = Math.round((width * maxWidth) / height);
+              height = maxWidth;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          const compressed = canvas.toDataURL('image/jpeg', quality);
+          resolve(compressed);
+        };
+        img.onerror = reject;
+        img.src = e.target.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handlePhotoChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
       if (!file.type.startsWith('image/')) {
@@ -53,29 +98,33 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
         return;
       }
       setPhotoFile(file);
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setPhotoPreview(reader.result);
-      };
-      reader.readAsDataURL(file);
-      setErrorMsg('');
+      try {
+        const compressed = await compressImage(file, 900, 0.76);
+        setPhotoPreview(compressed);
+        setErrorMsg('');
+      } catch (err) {
+        setErrorMsg('Failed to process image. Please try another file.');
+      }
     }
   };
 
-  const handleReceiptChange = (e) => {
+  const handleReceiptChange = async (e) => {
     const file = e.target.files[0];
     if (file) {
       setReceiptFile(file);
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setReceiptPreview(reader.result);
-        };
-        reader.readAsDataURL(file);
-      } else {
-        setReceiptPreview('pdf');
+      try {
+        if (file.type === 'application/pdf') {
+          const reader = new FileReader();
+          reader.onload = () => setReceiptPreview(reader.result);
+          reader.readAsDataURL(file);
+        } else {
+          const compressed = await compressImage(file, 1100, 0.76);
+          setReceiptPreview(compressed);
+        }
+        setErrorMsg('');
+      } catch (err) {
+        setErrorMsg('Failed to process receipt. Please try another file.');
       }
-      setErrorMsg('');
     }
   };
 
@@ -91,23 +140,36 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
     e.preventDefault();
     setErrorMsg('');
 
-    if (!formData.fullName.trim()) {
+    const trimmedName = formData.fullName.trim();
+    if (!trimmedName) {
       setErrorMsg('Please enter your full name.');
       return;
     }
-    if (!formData.matricNo.trim()) {
+    const nameParts = trimmedName.split(/\s+/).filter(Boolean);
+    if (nameParts.length < 2) {
+      setErrorMsg('Full name must contain at least two names (e.g. first and last name separated by a space).');
+      return;
+    }
+
+    const cleanMatric = formData.matricNo.trim();
+    if (!cleanMatric) {
       setErrorMsg('Please enter your matriculation number.');
       return;
     }
+    if (!/^\d{9}$/.test(cleanMatric)) {
+      setErrorMsg('Matriculation number must be a number and exactly 9 digits (e.g. 250405001).');
+      return;
+    }
+
     if (!formData.dobDay || !formData.dobMonth) {
       setErrorMsg('Please select your birth day and month.');
       return;
     }
-    if (!photoFile) {
+    if (!photoPreview && !photoFile) {
       setErrorMsg('Please upload a photograph of yourself.');
       return;
     }
-    if (!receiptFile) {
+    if (!receiptPreview && !receiptFile) {
       setErrorMsg('Please upload your payment receipt.');
       return;
     }
@@ -115,20 +177,19 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
     setIsSubmitting(true);
 
     try {
-      const data = new FormData();
-      data.append('full_name', formData.fullName.trim());
-      data.append('matric_no', formData.matricNo.trim().toUpperCase());
-      data.append('nickname', formData.nickname.trim());
-      data.append('dob_day', formData.dobDay);
-      data.append('dob_month', formData.dobMonth);
-      data.append('interests', formData.interests.trim());
-
-      if (photoFile) data.append('photo', photoFile);
-      if (receiptFile) data.append('receipt', receiptFile);
-
       const res = await fetch('/api/students/submit', {
         method: 'POST',
-        body: data
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          full_name: trimmedName,
+          matric_no: cleanMatric,
+          nickname: formData.nickname.trim(),
+          dob_day: formData.dobDay,
+          dob_month: formData.dobMonth,
+          interests: formData.interests.trim(),
+          photo: photoPreview,
+          receipt: receiptPreview
+        })
       });
 
       const json = await res.json();
@@ -137,12 +198,13 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
       }
 
       setSuccessData({
-        name: formData.fullName,
-        matric: formData.matricNo.toUpperCase()
+        name: trimmedName,
+        matric: cleanMatric
       });
 
+      // Refresh student list in the background without automatically redirecting
       if (onSubmissionSuccess) {
-        await onSubmissionSuccess();
+        onSubmissionSuccess();
       }
     } catch (err) {
       setErrorMsg(err.message || 'Network error occurred. Please try again.');
@@ -170,24 +232,48 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
 
   if (successData) {
     return (
-      <div className="max-w-lg mx-auto bg-stone-900 border border-emerald-900/60 rounded-2xl p-6 sm:p-8 shadow-2xl text-center space-y-5">
-        <div className="w-14 h-14 bg-emerald-950 border border-emerald-500/50 rounded-2xl flex items-center justify-center mx-auto text-emerald-400">
-          <CheckCircle className="w-7 h-7" />
+      <div className="max-w-lg mx-auto bg-stone-900 border border-emerald-900/60 rounded-2xl p-6 sm:p-8 shadow-2xl text-center space-y-6 animate-in fade-in zoom-in-95 duration-200">
+        <div className="w-16 h-16 bg-emerald-950 border border-emerald-500/50 rounded-2xl flex items-center justify-center mx-auto text-emerald-400 shadow-lg shadow-emerald-950/50">
+          <CheckCircle className="w-8 h-8" />
         </div>
 
-        <div className="space-y-1.5">
-          <h2 className="text-xl sm:text-2xl font-bold text-white">Details & Dues Submitted!</h2>
-          <p className="text-xs sm:text-sm text-stone-300">
-            Thank you, <strong className="text-emerald-400">{successData.name}</strong>. Your payment receipt and birthday profile have been recorded. You are now listed on the paid dashboard!
+        <div className="space-y-2">
+          <div className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold uppercase tracking-wider">
+            <span>Payment & Profile Recorded</span>
+          </div>
+          <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
+            Details & Dues Submitted!
+          </h2>
+          <p className="text-xs sm:text-sm text-stone-300 leading-relaxed">
+            Thank you, <strong className="text-emerald-400">{successData.name}</strong> (<span className="font-mono text-emerald-300 font-semibold">{successData.matric}</span>). Your payment receipt and birthday profile have been recorded successfully.
           </p>
         </div>
 
-        <button
-          onClick={resetForm}
-          className="w-full py-2.5 px-4 rounded-xl font-bold text-xs bg-emerald-400 hover:bg-emerald-300 text-emerald-950 transition-colors shadow-md"
-        >
-          Submit Another Person
-        </button>
+        <div className="space-y-2.5 pt-2">
+          {/* Primary Action: Go to Paid List */}
+          <button
+            type="button"
+            onClick={() => {
+              resetForm();
+              if (onViewPaidList) {
+                onViewPaidList();
+              }
+            }}
+            className="w-full py-3 px-5 rounded-xl font-bold text-xs sm:text-sm bg-emerald-400 hover:bg-emerald-300 text-emerald-950 transition-all shadow-lg flex items-center justify-center space-x-2"
+          >
+            <span>View Paid List</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+
+          {/* Secondary Action: Submit Another Person */}
+          <button
+            type="button"
+            onClick={resetForm}
+            className="w-full py-2.5 px-4 rounded-xl font-semibold text-xs bg-stone-950 hover:bg-stone-800 text-stone-300 border border-stone-800 transition-colors"
+          >
+            Submit Another Coursemate
+          </button>
+        </div>
       </div>
     );
   }
@@ -242,14 +328,14 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
             {/* Full Name */}
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold text-stone-300 mb-1">
-                Full Name <span className="text-emerald-400">*</span>
+                Full Name <span className="text-emerald-400">*</span> <span className="text-stone-500 font-normal">(at least two names)</span>
               </label>
               <input
                 type="text"
                 required
                 value={formData.fullName}
                 onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                placeholder="e.g. Adegoke Oluwaseun Michael"
+                placeholder="Okefolahan Olamide"
                 className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-stone-100 placeholder-stone-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
               />
             </div>
@@ -257,14 +343,17 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
             {/* Matriculation Number */}
             <div>
               <label className="block text-xs font-semibold text-stone-300 mb-1">
-                Matric Number <span className="text-emerald-400">*</span>
+                Matric Number <span className="text-emerald-400">*</span> <span className="text-stone-500 font-normal">(9 digits)</span>
               </label>
               <input
                 type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={9}
                 required
                 value={formData.matricNo}
-                onChange={(e) => setFormData({ ...formData, matricNo: e.target.value.toUpperCase() })}
-                placeholder="250405000"
+                onChange={(e) => setFormData({ ...formData, matricNo: e.target.value.replace(/\D/g, '').slice(0, 9) })}
+                placeholder="250405001"
                 className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-mono text-stone-100 placeholder-stone-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
               />
             </div>
@@ -278,7 +367,7 @@ export default function SubmissionForm({ settings, onSubmissionSuccess }) {
                 type="text"
                 value={formData.nickname}
                 onChange={(e) => setFormData({ ...formData, nickname: e.target.value })}
-                placeholder="Gbeff"
+                placeholder="Professeur"
                 className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-stone-100 placeholder-stone-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
               />
             </div>

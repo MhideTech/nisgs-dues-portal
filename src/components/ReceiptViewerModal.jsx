@@ -4,8 +4,8 @@ import { X, Download, ExternalLink, CheckCircle, User } from 'lucide-react';
 export default function ReceiptViewerModal({ student, onClose }) {
   if (!student || !student.receipt_url) return null;
 
-  const isPdf = student.receipt_url.toLowerCase().endsWith('.pdf');
-  const fullUrl = student.receipt_url.startsWith('http') 
+  const isPdf = student.receipt_url.toLowerCase().endsWith('.pdf') || student.receipt_url.startsWith('data:application/pdf');
+  const fullUrl = student.receipt_url.startsWith('http') || student.receipt_url.startsWith('data:')
     ? student.receipt_url 
     : `${window.location.origin}${student.receipt_url}`;
 

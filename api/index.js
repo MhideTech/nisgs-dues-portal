@@ -1,18 +1,19 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { put, del, list, get } from '@vercel/blob';
-import path from 'path';
+import { neon } from '@neondatabase/serverless';
 
 const app = express();
 
-// Disable Express ETag so responses are never cached as 304 Not Modified
+// Disable Express ETag to prevent 304 stale caching
 app.set('etag', false);
 
 app.use(cors());
-app.use(express.json());
+// Support JSON bodies up to 10MB for fast compressed base64 images
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Force no caching on all API responses so updates reflect immediately
+// Never cache API responses
 app.use((req, res, next) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
@@ -21,7 +22,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Memory storage for multer (serverless compatible)
+// Multer memory storage for backward compatibility with multipart uploads
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
@@ -37,95 +38,50 @@ const DEFAULT_SETTINGS = {
   admin_pin: '2030'
 };
 
-const INITIAL_SHOWCASE_STUDENT = {
-  id: 1,
-  full_name: 'Adegoke Oluwaseun Michael',
-  matric_no: '250405001',
-  nickname: 'Gbeff',
-  dob_day: 24,
-  dob_month: 10,
-  photo_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=500&auto=format&fit=crop&q=80',
-  interests: 'Remote sensing, UAV drone piloting, Python for GIS, football',
-  dues_status: 'paid',
-  receipt_url: 'https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?w=600&auto=format&fit=crop&q=80',
-  amount_paid: 2000,
-  verified_by_admin: 1,
-  created_at: new Date().toISOString()
+const getSql = () => {
+  const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+  if (!dbUrl) {
+    throw new Error('DATABASE_URL or POSTGRES_URL environment variable is not configured');
+  }
+  return neon(dbUrl);
 };
 
-const BLOB_PREFIX = 'data/students-';
-
-// In-memory fallback if Blob is unreachable
-let localStudents = [INITIAL_SHOWCASE_STUDENT];
-
-// Read students from Blob or fallback
-async function getStudentsList() {
+// 1. Get Settings
+app.get('/api/settings', async (req, res) => {
   try {
-    const { blobs } = await list({ prefix: BLOB_PREFIX });
-    if (blobs.length > 0) {
-      // Sort descending by uploadedAt to get the latest snapshot
-      blobs.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
-      const latest = blobs[0];
-      const res = await get(latest.pathname, { access: 'public' });
-      if (res && res.stream) {
-        const text = await new Response(res.stream).text();
-        const parsed = JSON.parse(text);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          localStudents = parsed;
-          return parsed;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('[Vercel Blob] Read note:', err.message);
-  }
-  return localStudents;
-}
-
-// Save students to Blob with unique snapshot to guarantee zero-cache staleness
-async function saveStudentsList(students) {
-  localStudents = students;
-  try {
-    const newPath = `${BLOB_PREFIX}${Date.now()}.json`;
-    await put(newPath, JSON.stringify(students, null, 2), {
-      access: 'public',
-      contentType: 'application/json'
+    const sql = getSql();
+    const rows = await sql`SELECT key, value FROM settings`;
+    const settings = { ...DEFAULT_SETTINGS };
+    rows.forEach(r => {
+      settings[r.key] = r.value;
     });
-    console.log(`[Vercel Blob] Successfully saved snapshot with ${students.length} students to ${newPath}`);
-
-    // Prune older snapshots
-    list({ prefix: BLOB_PREFIX }).then(async ({ blobs }) => {
-      for (const b of blobs) {
-        if (b.pathname !== newPath) {
-          await del(b.url).catch(() => {});
-        }
-      }
-    }).catch(() => {});
+    res.json(settings);
   } catch (err) {
-    console.error('[Vercel Blob] Write error:', err.message);
-    throw err;
+    console.error('Settings error:', err.message);
+    res.json(DEFAULT_SETTINGS);
   }
-}
-
-// 1. Get settings
-app.get('/api/settings', (req, res) => {
-  res.json(DEFAULT_SETTINGS);
 });
 
-// 2. Get students
+// 2. Get Students (from PostgreSQL)
 app.get('/api/students', async (req, res) => {
   try {
-    const list = await getStudentsList();
+    const sql = getSql();
+    const students = await sql`
+      SELECT * FROM students 
+      WHERE dues_status = 'paid' 
+      ORDER BY full_name ASC
+    `;
     res.json({
-      students: list,
-      total: list.length
+      students,
+      total: students.length
     });
   } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch students' });
+    console.error('Students fetch error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch students from database' });
   }
 });
 
-// 3. Submit student details with photo & receipt
+// 3. Submit Student Details & Receipt (PostgreSQL Upsert)
 app.post('/api/students/submit', upload.fields([
   { name: 'photo', maxCount: 1 },
   { name: 'receipt', maxCount: 1 }
@@ -137,53 +93,48 @@ app.post('/api/students/submit', upload.fields([
       nickname,
       dob_day,
       dob_month,
-      interests
+      interests,
+      photo: jsonPhoto,
+      receipt: jsonReceipt
     } = req.body;
 
     if (!full_name || !matric_no || !dob_day || !dob_month) {
       return res.status(400).json({ error: 'Full name, matric number, and birth day/month are required' });
     }
 
-    const cleanMatric = matric_no.trim().toUpperCase();
     const cleanName = full_name.trim();
-
-    let students = await getStudentsList();
-    const existingIndex = students.findIndex(s => s.matric_no === cleanMatric);
-    const existing = existingIndex >= 0 ? students[existingIndex] : null;
-
-    let photoUrl = existing ? existing.photo_url : null;
-    let receiptUrl = existing ? existing.receipt_url : null;
-
-    // Upload photo to Blob or fallback to base64
-    if (req.files?.['photo']?.[0]) {
-      const file = req.files['photo'][0];
-      try {
-        const unique = `photos/${Date.now()}-${cleanMatric.replace(/[^A-Z0-9]/gi, '_')}${path.extname(file.originalname) || '.jpg'}`;
-        const blob = await put(unique, file.buffer, {
-          access: 'public',
-          contentType: file.mimetype
-        });
-        photoUrl = blob.url;
-      } catch (blobErr) {
-        console.warn('Photo Blob upload fallback:', blobErr.message);
-        photoUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-      }
+    const nameParts = cleanName.split(/\s+/).filter(Boolean);
+    if (nameParts.length < 2) {
+      return res.status(400).json({ error: 'Full name must contain at least two names separated by a space.' });
     }
 
-    // Upload receipt to Blob or fallback to base64
+    const cleanMatric = matric_no.trim();
+    if (!/^\d{9}$/.test(cleanMatric)) {
+      return res.status(400).json({ error: 'Matriculation number must be a number and exactly 9 digits.' });
+    }
+
+    const sql = getSql();
+
+    // Check existing record
+    const existingRows = await sql`
+      SELECT id, photo_url, receipt_url, nickname, interests, created_at 
+      FROM students 
+      WHERE matric_no = ${cleanMatric} 
+      LIMIT 1
+    `;
+    const existing = existingRows[0] || null;
+
+    let photoUrl = jsonPhoto || (existing ? existing.photo_url : null);
+    let receiptUrl = jsonReceipt || (existing ? existing.receipt_url : null);
+
+    // If uploaded via multipart files
+    if (req.files?.['photo']?.[0]) {
+      const f = req.files['photo'][0];
+      photoUrl = `data:${f.mimetype};base64,${f.buffer.toString('base64')}`;
+    }
     if (req.files?.['receipt']?.[0]) {
-      const file = req.files['receipt'][0];
-      try {
-        const unique = `receipts/${Date.now()}-${cleanMatric.replace(/[^A-Z0-9]/gi, '_')}${path.extname(file.originalname) || '.jpg'}`;
-        const blob = await put(unique, file.buffer, {
-          access: 'public',
-          contentType: file.mimetype
-        });
-        receiptUrl = blob.url;
-      } catch (blobErr) {
-        console.warn('Receipt Blob upload fallback:', blobErr.message);
-        receiptUrl = `data:${file.mimetype};base64,${file.buffer.toString('base64')}`;
-      }
+      const f = req.files['receipt'][0];
+      receiptUrl = `data:${f.mimetype};base64,${f.buffer.toString('base64')}`;
     }
 
     if (!photoUrl && !existing) {
@@ -193,36 +144,41 @@ app.post('/api/students/submit', upload.fields([
       return res.status(400).json({ error: 'Payment receipt upload is required' });
     }
 
-    const studentRecord = {
-      id: existing ? existing.id : Date.now(),
-      full_name: cleanName,
-      matric_no: cleanMatric,
-      nickname: nickname ? nickname.trim() : (existing?.nickname || null),
-      dob_day: parseInt(dob_day),
-      dob_month: parseInt(dob_month),
-      photo_url: photoUrl,
-      interests: interests ? interests.trim() : (existing?.interests || null),
-      dues_status: 'paid',
-      receipt_url: receiptUrl,
-      amount_paid: 2000,
-      verified_by_admin: 1,
-      created_at: existing ? existing.created_at : new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    if (existingIndex >= 0) {
-      students[existingIndex] = studentRecord;
-    } else {
-      students.push(studentRecord);
-    }
-
-    await saveStudentsList(students);
+    const insertedRows = await sql`
+      INSERT INTO students (
+        full_name, matric_no, nickname, dob_day, dob_month,
+        photo_url, interests, dues_status, receipt_url,
+        amount_paid, verified_by_admin, updated_at
+      ) VALUES (
+        ${cleanName},
+        ${cleanMatric},
+        ${nickname ? nickname.trim() : (existing?.nickname || null)},
+        ${parseInt(dob_day)},
+        ${parseInt(dob_month)},
+        ${photoUrl},
+        ${interests ? interests.trim() : (existing?.interests || null)},
+        'paid',
+        ${receiptUrl},
+        2000,
+        1,
+        NOW()
+      )
+      ON CONFLICT (matric_no) DO UPDATE SET
+        full_name = EXCLUDED.full_name,
+        nickname = COALESCE(EXCLUDED.nickname, students.nickname),
+        dob_day = EXCLUDED.dob_day,
+        dob_month = EXCLUDED.dob_month,
+        photo_url = COALESCE(EXCLUDED.photo_url, students.photo_url),
+        interests = COALESCE(EXCLUDED.interests, students.interests),
+        receipt_url = COALESCE(EXCLUDED.receipt_url, students.receipt_url),
+        updated_at = NOW()
+      RETURNING *;
+    `;
 
     res.json({
       success: true,
       message: 'Submitted successfully! You are now listed on the paid dashboard.',
-      matric_no: cleanMatric,
-      student: studentRecord
+      student: insertedRows[0]
     });
   } catch (err) {
     console.error('Submission error:', err);
@@ -231,15 +187,25 @@ app.post('/api/students/submit', upload.fields([
 });
 
 // 4. Admin PIN check
-app.post('/api/admin/verify-pin', (req, res) => {
+app.post('/api/admin/verify-pin', async (req, res) => {
   const { pin } = req.body;
-  if (pin === DEFAULT_SETTINGS.admin_pin) {
-    return res.json({ success: true });
+  try {
+    const sql = getSql();
+    const rows = await sql`SELECT value FROM settings WHERE key = 'admin_pin' LIMIT 1`;
+    const adminPin = rows[0]?.value || DEFAULT_SETTINGS.admin_pin;
+    if (pin === adminPin) {
+      return res.json({ success: true });
+    }
+    return res.status(403).json({ error: 'Incorrect Admin PIN' });
+  } catch {
+    if (pin === DEFAULT_SETTINGS.admin_pin) {
+      return res.json({ success: true });
+    }
+    return res.status(403).json({ error: 'Incorrect Admin PIN' });
   }
-  return res.status(403).json({ error: 'Incorrect Admin PIN' });
 });
 
-// 5. Admin: Delete a student record
+// 5. Admin: Delete student
 app.post('/api/admin/delete-student', async (req, res) => {
   const { pin, student_id } = req.body;
   if (pin !== DEFAULT_SETTINGS.admin_pin) {
@@ -247,11 +213,11 @@ app.post('/api/admin/delete-student', async (req, res) => {
   }
 
   try {
-    let students = await getStudentsList();
-    students = students.filter(s => s.id !== student_id);
-    await saveStudentsList(students);
+    const sql = getSql();
+    await sql`DELETE FROM students WHERE id = ${parseInt(student_id)}`;
     res.json({ success: true, message: 'Student record removed' });
   } catch (err) {
+    console.error('Delete error:', err);
     res.status(500).json({ error: 'Failed to delete student record' });
   }
 });
