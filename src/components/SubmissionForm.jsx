@@ -351,6 +351,7 @@ export default function SubmissionForm({ settings, onSubmissionSuccess, onViewPa
                 placeholder="250405001"
                 className="w-full bg-stone-950 border border-stone-700 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm font-mono text-stone-100 placeholder-stone-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 transition-all"
               />
+              <p className="text-[10px] text-stone-500 mt-1">Unique 9 digits for each coursemate</p>
             </div>
 
             {/* Alias / Nickname */}

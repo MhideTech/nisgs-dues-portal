@@ -117,12 +117,22 @@ app.post('/api/students/submit', upload.fields([
 
     // Check existing record
     const existingRows = await sql`
-      SELECT id, photo_url, receipt_url, nickname, interests, created_at 
+      SELECT id, full_name, photo_url, receipt_url, nickname, interests, created_at 
       FROM students 
       WHERE matric_no = ${cleanMatric} 
       LIMIT 1
     `;
     const existing = existingRows[0] || null;
+
+    if (existing) {
+      const existingNameClean = existing.full_name.trim().toLowerCase();
+      const newNameClean = cleanName.trim().toLowerCase();
+      if (existingNameClean !== newNameClean) {
+        return res.status(400).json({
+          error: `Matric number ${cleanMatric} is already registered to "${existing.full_name}". Each coursemate must submit with their own unique 9-digit matric number.`
+        });
+      }
+    }
 
     let photoUrl = jsonPhoto || (existing ? existing.photo_url : null);
     let receiptUrl = jsonReceipt || (existing ? existing.receipt_url : null);
