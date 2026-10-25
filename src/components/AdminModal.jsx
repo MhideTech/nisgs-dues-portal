@@ -115,7 +115,7 @@ export default function AdminModal({
             </div>
             <div>
               <h4 className="text-sm sm:text-base font-bold text-white">Enter Admin PIN</h4>
-              <p className="text-xs text-stone-400">Enter your 4-digit PIN to proceed</p>
+              <p className="text-xs text-stone-400">Enter your PIN to proceed</p>
             </div>
 
             <input
