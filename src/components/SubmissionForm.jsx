@@ -3,6 +3,7 @@ import {
   CheckCircle, AlertCircle, Calendar, Camera, FileText, 
   Copy, Check, ArrowRight, Sparkles 
 } from 'lucide-react';
+import { ModalSocials } from './SocialLinks.jsx';
 
 export default function SubmissionForm({ settings, onSubmissionSuccess, onViewPaidList }) {
   const [formData, setFormData] = useState({
@@ -249,7 +250,7 @@ export default function SubmissionForm({ settings, onSubmissionSuccess, onViewPa
           </p>
         </div>
 
-        <div className="space-y-2.5 pt-2">
+        <div className="space-y-4 pt-2">
           {/* Primary Action: Go to Paid List */}
           <button
             type="button"
@@ -265,14 +266,8 @@ export default function SubmissionForm({ settings, onSubmissionSuccess, onViewPa
             <ArrowRight className="w-4 h-4" />
           </button>
 
-          {/* Secondary Action: Submit Another Person */}
-          <button
-            type="button"
-            onClick={resetForm}
-            className="w-full py-2.5 px-4 rounded-xl font-semibold text-xs bg-stone-950 hover:bg-stone-800 text-stone-300 border border-stone-800 transition-colors"
-          >
-            Submit Another Coursemate
-          </button>
+          {/* Socials Connection */}
+          <ModalSocials />
         </div>
       </div>
     );

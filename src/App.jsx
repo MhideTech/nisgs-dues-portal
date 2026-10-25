@@ -8,6 +8,7 @@ import DuesBoard from './components/DuesBoard.jsx';
 import BirthdayCardModal from './components/BirthdayCardModal.jsx';
 import AdminModal from './components/AdminModal.jsx';
 import ReceiptViewerModal from './components/ReceiptViewerModal.jsx';
+import { FooterSocials } from './components/SocialLinks.jsx';
 
 export default function App() {
   // Requirement 1: Form is default on page load!
@@ -185,7 +186,8 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="mt-auto border-t border-stone-800/80 bg-[#050806] py-5 px-4 text-xs text-stone-500 text-center">
+      <footer className="mt-auto border-t border-stone-800/80 bg-[#050806] py-6 px-4 text-xs text-stone-500 text-center">
+        <FooterSocials />
         <p className="font-semibold text-stone-400">
           Department of Surveying & Geoinformatics • Class of 2030
         </p>
