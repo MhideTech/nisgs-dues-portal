@@ -86,27 +86,57 @@ export default function BirthdayCardModal({ student, onClose }) {
 
     const logoImg = new Image();
     logoImg.crossOrigin = 'anonymous';
-    logoImg.src = '/nisgs-logo.png';
 
     const photoImg = new Image();
-    photoImg.crossOrigin = 'anonymous';
-    photoImg.src = student.photo_url.startsWith('http') 
-      ? student.photo_url 
-      : `${window.location.origin}${student.photo_url}`;
 
     let loadedCount = 0;
+    const totalToLoad = 2;
+    let hasRendered = false;
+
     const checkAllLoaded = () => {
       loadedCount++;
-      if (loadedCount >= 2) {
+      if (loadedCount >= totalToLoad && !hasRendered) {
+        hasRendered = true;
         renderGraphics();
       }
     };
 
     logoImg.onload = checkAllLoaded;
-    logoImg.onerror = () => checkAllLoaded();
+    logoImg.onerror = () => {
+      console.warn('Could not load logo');
+      checkAllLoaded();
+    };
+    logoImg.src = '/nisgs-logo.png';
 
     photoImg.onload = checkAllLoaded;
-    photoImg.onerror = () => checkAllLoaded();
+    photoImg.onerror = (e) => {
+      console.warn('Could not load student photo on canvas:', e);
+      checkAllLoaded();
+    };
+
+    if (student.photo_url) {
+      const url = student.photo_url.trim();
+      if (url.startsWith('data:')) {
+        // Base64 data URL: no crossOrigin needed
+        photoImg.src = url;
+      } else if (url.startsWith('http://') || url.startsWith('https://')) {
+        photoImg.crossOrigin = 'anonymous';
+        photoImg.src = url;
+      } else if (url.startsWith('/')) {
+        photoImg.crossOrigin = 'anonymous';
+        photoImg.src = `${window.location.origin}${url}`;
+      } else {
+        photoImg.src = url;
+      }
+
+      // If already complete (e.g. cached or synchronous base64 data URL)
+      if (photoImg.complete && photoImg.naturalWidth > 0) {
+        checkAllLoaded();
+      }
+    } else {
+      // No photo provided
+      checkAllLoaded();
+    }
 
     const renderGraphics = () => {
       // 1. Deep Obsidian / Survey Forest Background
@@ -280,8 +310,12 @@ export default function BirthdayCardModal({ student, onClose }) {
       ctx.font = '700 20px "Plus Jakarta Sans", sans-serif';
       ctx.fillText('FROM: CLASS OF 2030 • SURVEYING & GEOINFORMATICS', W / 2, H - 70);
 
-      const dataUrl = canvas.toDataURL('image/png');
-      setDownloadUrl(dataUrl);
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        setDownloadUrl(dataUrl);
+      } catch (err) {
+        console.error('Failed to create dataUrl from canvas:', err);
+      }
       setIsGenerating(false);
     };
 
